@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Catch the Falling Objects Game</title>
+  <style>
+    body {
+      background: #222;
+      color: #fff;
+      text-align: center;
+      font-family: sans-serif;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+    #gameCanvas {
+      background: #222;
+      display: block;
+      margin: 30px auto 0;
+      border: 2px solid #fff;
+      border-radius: 10px;
+    }
+    #scoreboard {
+      font-size: 20px;
+      margin-top: 10px;
+    }
+    #gameOverScreen {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100vw;
+      height: 100vh;
+      background: rgba(20, 20, 20, 0.96);
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      font-size: 2em;
+      z-index: 10;
+      display: none;
+    }
+    #restartBtn {
+      font-size: 1em;
+      margin-top: 20px;
+      padding: 10px 30px;
+      border: none;
+      background: #36d;
+      color: #fff;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    #restartBtn:hover {
+      background: #59f;
+    }
+  </style>
+</head>
+<body>
+  <h1>Catch the Falling Objects</h1>
+  <div id="scoreboard">Score: 0 | Missed: 0 / 5</div>
+  <canvas id="gameCanvas" width="480" height="640"></canvas>
+  <div id="gameOverScreen">
+    <div id="gameOverMsg"></div>
+    <button id="restartBtn">Restart</button>
+  </div>
+  <script>
+    // Game Config
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreboard = document.getElementById('scoreboard');
+    const gameOverScreen = document.getElementById('gameOverScreen');
+    const gameOverMsg = document.getElementById('gameOverMsg');
+    const restartBtn = document.getElementById('restartBtn');
+
+    const BASKET_WIDTH = 80;
+    const BASKET_HEIGHT = 30;
+    const BASKET_SPEED = 7;
+
+    const OBJECT_RADIUS = 20;
+    const OBJECT_FALL_SPEED = 3;
+    const OBJECT_INTERVAL = 1200; // ms
+
+    const MAX_MISSED = 5;
+
+    // Fruit/star colors and emojis
+    const OBJECTS = [
+      {color: '#ff5252', emoji: '??'},
+      {color: '#fbc02d', emoji: '??'},
+      {color: '#43a047', emoji: '??'},
+      {color: '#fbc02d', emoji: '?'},
+      {color: '#c62828', emoji: '??'},
+      {color: '#ffb300', emoji: '??'},
+      {color: '#6d4c41', emoji: '??'},
+      {color: '#aa00ff', emoji: '??'}
+    ];
+
+    // State
+    let basket = {x: canvas.width/2 - BASKET_WIDTH/2, y: canvas.height - BASKET_HEIGHT - 10, dx: 0};
+    let fallingObjects = [];
+    let score = 0;
+    let missed = 0;
+    let leftPressed = false, rightPressed = false;
+    let gameInterval, objectInterval, running = false;
+
+    // Controls
+    document.addEventListener('keydown', (e) => {
+      if (e.key === "ArrowLeft" || e.key === "a") leftPressed = true;
+      if (e.key === "ArrowRight" || e.key === "d") rightPressed = true;
+    });
+    document.addEventListener('keyup', (e) => {
+      if (e.key === "ArrowLeft" || e.key === "a") leftPressed = false;
+      if (e.key === "ArrowRight" || e.key === "d") rightPressed = false;
+    });
+
+    // Touch controls (mobile)
+    canvas.addEventListener('touchstart', (e) => {
+      const touchX = e.touches[0].clientX - canvas.getBoundingClientRect().left;
+      if (touchX < basket.x + BASKET_WIDTH/2) {
+        leftPressed = true; rightPressed = false;
+      } else {
+        rightPressed = true; leftPressed = false;
+      }
+    });
+    canvas.addEventListener('touchend', () => {
+      leftPressed = false; rightPressed = false;
+    });
+
+    // Drawing Functions
+    function drawBasket() {
+      ctx.save();
+      ctx.fillStyle = "#ff9800";
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(basket.x + BASKET_WIDTH/2, basket.y + BASKET_HEIGHT/2, BASKET_WIDTH/2, BASKET_HEIGHT/2, 0, 0, Math.PI*2);
+      ctx.fill();
+      ctx.stroke();
+      // Draw a handle
+      ctx.beginPath();
+      ctx.arc(basket.x + BASKET_WIDTH/2, basket.y + 8, BASKET_WIDTH/3, Math.PI, 0, false);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawObject(obj) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(obj.x, obj.y, OBJECT_RADIUS, 0, Math.PI*2);
+      ctx.fillStyle = obj.color;
+      ctx.globalAlpha = 0.8;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.font = "26px serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(obj.emoji, obj.x, obj.y + 2);
+      ctx.restore();
+    }
+
+    // Game Logic
+    function spawnObject() {
+      const objType = OBJECTS[Math.floor(Math.random()*OBJECTS.length)];
+      const x = OBJECT_RADIUS + Math.random()*(canvas.width-2*OBJECT_RADIUS);
+      fallingObjects.push({
+        x: x,
+        y: -OBJECT_RADIUS,
+        color: objType.color,
+        emoji: objType.emoji,
+        caught: false
+      });
+    }
+
+    function moveBasket() {
+      if (leftPressed) {
+        basket.x -= BASKET_SPEED;
+      } else if (rightPressed) {
+        basket.x += BASKET_SPEED;
+      }
+      // Clamp
+      if (basket.x < 0) basket.x = 0;
+      if (basket.x > canvas.width-BASKET_WIDTH) basket.x = canvas.width-BASKET_WIDTH;
+    }
+
+    function updateObjects() {
+      for (let obj of fallingObjects) {
+        obj.y += OBJECT_FALL_SPEED;
+      }
+      // Collision detection and score
+      for (let i = fallingObjects.length-1; i >= 0; i--) {
+        let obj = fallingObjects[i];
+        // Basket collision
+        if (
+          obj.y + OBJECT_RADIUS >= basket.y &&
+          obj.x > basket.x &&
+          obj.x < basket.x + BASKET_WIDTH &&
+          obj.y < basket.y + BASKET_HEIGHT
+        ) {
+          score++;
+          fallingObjects.splice(i, 1);
+        }
+        // Missed
+        else if (obj.y - OBJECT_RADIUS > canvas.height) {
+          missed++;
+          fallingObjects.splice(i, 1);
+        }
+      }
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      drawBasket();
+      for (let obj of fallingObjects) {
+        drawObject(obj);
+      }
+    }
+
+    function updateScoreboard() {
+      scoreboard.textContent = `Score: ${score} | Missed: ${missed} / ${MAX_MISSED}`;
+    }
+
+    function gameOver() {
+      running = false;
+      clearInterval(gameInterval);
+      clearInterval(objectInterval);
+      gameOverMsg.innerHTML = `Game Over!<br>Final Score: ${score}`;
+      gameOverScreen.style.display = "flex";
+    }
+
+    function gameLoop() {
+      moveBasket();
+      updateObjects();
+      draw();
+      updateScoreboard();
+      if (missed >= MAX_MISSED) gameOver();
+    }
+
+    function startGame() {
+      // Reset state
+      basket.x = canvas.width/2 - BASKET_WIDTH/2;
+      fallingObjects = [];
+      score = 0;
+      missed = 0;
+      running = true;
+      updateScoreboard();
+      gameOverScreen.style.display = "none";
+
+      objectInterval = setInterval(spawnObject, OBJECT_INTERVAL);
+      gameInterval = setInterval(gameLoop, 1000/60);
+    }
+
+    restartBtn.onclick = startGame;
+
+    // Start game on load
+    startGame();
+  </script>
+</body>
+</html>
